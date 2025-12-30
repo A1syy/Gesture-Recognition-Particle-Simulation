@@ -37,7 +37,7 @@ class ParticleSystem {
     // Use cached particle size for better performance
     const pSize =
       typeof getCachedParticleSize === "function" ? getCachedParticleSize() : 3;
-    
+
     const particles = this.particles;
     const len = particles.length;
 
@@ -45,7 +45,7 @@ class ParticleSystem {
       // Colorful effect for text - use fewer color changes
       const time = Date.now() * 0.003;
       const baseHue = (time * 50) % 360;
-      
+
       // Pre-set color and batch draw
       for (let i = 0; i < len; i++) {
         const p = particles[i];
@@ -64,10 +64,14 @@ class ParticleSystem {
         const p = particles[i];
         p.update();
         if (p.target.explosionIndex !== undefined) {
-          const explosion = typeof fireworksData !== "undefined" ? fireworksData[p.target.explosionIndex] : null;
+          const explosion =
+            typeof fireworksData !== "undefined"
+              ? fireworksData[p.target.explosionIndex]
+              : null;
           if (explosion) {
             const opacity = p.target.opacity || 1;
-            if (opacity > 0.05) {  // Higher threshold
+            if (opacity > 0.05) {
+              // Higher threshold
               ctx.globalAlpha = opacity;
               ctx.fillStyle = `hsl(${explosion.hue}, 80%, 60%)`;
               p.draw(ctx, pSize);

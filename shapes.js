@@ -13,12 +13,12 @@ let starTargetsCache = [];
 function sphereTargets(count, cx, cy, r) {
   rotation += 0.01;
 
-  // Generate fixed 3D points only once
+  // Generate fixed 3D points only once with NORMALIZED radius (1.0)
   if (spherePoints3D.length !== count) {
     spherePoints3D = Array.from({ length: count }, () => {
       const phi = Math.acos(2 * Math.random() - 1);
       const theta = Math.random() * Math.PI * 2;
-      const rad = Math.cbrt(Math.random()) * r;
+      const rad = Math.cbrt(Math.random()); // Normalized 0-1
 
       return {
         x: rad * Math.sin(phi) * Math.cos(theta),
@@ -36,15 +36,15 @@ function sphereTargets(count, cx, cy, r) {
   const cosR = Math.cos(rotation);
   const sinR = Math.sin(rotation);
 
-  // Rotate and project existing points - reuse cache array
+  // Rotate and project existing points - APPLY SCALE (r) during render
   for (let i = 0; i < spherePoints3D.length; i++) {
     const p = spherePoints3D[i];
     const rotX = p.x * cosR - p.z * sinR;
     const rotZ = p.x * sinR + p.z * cosR;
-    const scale = 500 / (500 + rotZ);
+    const perspScale = 500 / (500 + rotZ * r);
 
-    sphereTargetsCache[i].x = cx + rotX * scale;
-    sphereTargetsCache[i].y = cy + p.y * scale;
+    sphereTargetsCache[i].x = cx + rotX * r * perspScale;
+    sphereTargetsCache[i].y = cy + p.y * r * perspScale;
   }
 
   return sphereTargetsCache;
@@ -94,11 +94,11 @@ function heartTargets(count, cx, cy, s) {
 function starTargets(count, cx, cy, r) {
   rotation += 0.01;
 
-  // Generate 2D star shape - particles along the edges
+  // Generate 2D star shape with NORMALIZED radius (1.0)
   if (starPoints3D.length !== count) {
     const points = 5;
-    const outerRadius = r;
-    const innerRadius = r * 0.4;
+    const outerRadius = 1.0; // Normalized
+    const innerRadius = 0.4; // Normalized
 
     const vertices = [];
     for (let i = 0; i < points * 2; i++) {
@@ -131,15 +131,15 @@ function starTargets(count, cx, cy, r) {
   const cosR = Math.cos(rotation);
   const sinR = Math.sin(rotation);
 
-  // Reuse cache array
+  // Reuse cache array - APPLY SCALE (r) during render
   for (let i = 0; i < starPoints3D.length; i++) {
     const p = starPoints3D[i];
     const rotX = p.x * cosR - p.z * sinR;
     const rotZ = p.x * sinR + p.z * cosR;
-    const scale = 500 / (500 + rotZ);
+    const perspScale = 500 / (500 + rotZ * r);
 
-    starTargetsCache[i].x = cx + rotX * scale;
-    starTargetsCache[i].y = cy - p.y * scale;
+    starTargetsCache[i].x = cx + rotX * r * perspScale;
+    starTargetsCache[i].y = cy - p.y * r * perspScale;
   }
 
   return starTargetsCache;
@@ -156,9 +156,9 @@ function fireworksTargets(count, cx, cy) {
   const screenScale = Math.min(window.innerWidth, window.innerHeight) / 1080;
   const respScale = Math.max(screenScale, 0.4);
 
-  // Simplified: only 2 fireworks for better performance
-  const numFireworks = 2;
-  const cycleDuration = 5;
+  // 4 fireworks with trail effect
+  const numFireworks = 4;
+  const cycleDuration = 6;
 
   // Initialize fireworks data once
   if (fireworksData.length === 0) {
@@ -168,10 +168,10 @@ function fireworksTargets(count, cx, cy) {
     const screenWidth = window.innerWidth;
 
     for (let i = 0; i < numFireworks; i++) {
-      const minY = screenHeight * 0.25;
-      const maxY = screenHeight * 0.45;
+      const minY = screenHeight * 0.2;
+      const maxY = screenHeight * 0.5;
       const explosionY = minY + Math.random() * (maxY - minY);
-      const marginX = screenWidth * 0.2;
+      const marginX = screenWidth * 0.15;
       const explosionX = marginX + Math.random() * (screenWidth - marginX * 2);
 
       fireworksData.push({
@@ -180,7 +180,7 @@ function fireworksTargets(count, cx, cy) {
         explosionX,
         explosionY,
         hue: Math.random() * 360,
-        delay: i * 2.5,
+        delay: i * 1.5, // Staggered launch
       });
     }
   }
@@ -191,19 +191,19 @@ function fireworksTargets(count, cx, cy) {
   if (fireworksTargetsCache.length !== count) {
     fireworksTargetsCache = new Array(count);
     fireworksParticleData = new Array(count);
-    
+
     for (let i = 0; i < count; i++) {
       fireworksTargetsCache[i] = { x: 0, y: 0, explosionIndex: 0, opacity: 0 };
-      // Pre-generate random values
+      // Pre-generate random values for explosion
       fireworksParticleData[i] = {
         angle: Math.random() * Math.PI * 2,
-        radius: 0.3 + Math.random() * 0.7,
-        offset: (Math.random() - 0.5) * 50 * respScale,
+        radius: 0.2 + Math.random() * 0.8,
+        trailPos: Math.random(), // Position along trail (0-1)
       };
     }
   }
 
-  // Update targets in place (no array creation)
+  // Update targets in place
   for (let fwIndex = 0; fwIndex < numFireworks; fwIndex++) {
     const firework = fireworksData[fwIndex];
     const adjustedTime = time - firework.delay;
@@ -216,38 +216,74 @@ function fireworksTargets(count, cx, cy) {
     for (let i = startIdx; i < endIdx; i++) {
       const target = fireworksTargetsCache[i];
       const pData = fireworksParticleData[i];
-      
+      const particleIdx = i - startIdx;
+      const particleRatio = particleIdx / particlesPerFirework;
+
       target.explosionIndex = fwIndex;
 
-      if (localTime < 0 || phase >= 0.85) {
+      if (localTime < 0 || phase >= 0.9) {
         // Hidden
         target.x = firework.launchX;
         target.y = firework.launchY;
         target.opacity = 0;
-      } else if (phase < 0.2) {
-        // Rise phase - simple line
-        const t = phase / 0.2;
-        target.x = firework.launchX + (firework.explosionX - firework.launchX) * t;
-        target.y = firework.launchY + (firework.explosionY - firework.launchY) * t;
+      } else if (phase < 0.25) {
+        // Rise phase WITH TRAIL
+        const t = phase / 0.25;
+
+        // Trail effect: particles spread along the path
+        let particleProgress;
+        if (particleRatio < 0.15) {
+          // 15% particles are rocket head
+          particleProgress = t;
+        } else {
+          // 85% particles form trail behind
+          const trailIdx = (particleRatio - 0.15) / 0.85;
+          particleProgress = Math.max(0, t - trailIdx * t * 0.8);
+        }
+
+        target.x =
+          firework.launchX +
+          (firework.explosionX - firework.launchX) * particleProgress;
+        target.y =
+          firework.launchY +
+          (firework.explosionY - firework.launchY) * particleProgress;
+
+        // Trail fade effect
+        const distFromHead = t - particleProgress;
+        target.opacity = Math.max(0.3, 1 - distFromHead * 3);
+      } else if (phase < 0.3) {
+        // Convergence phase - all particles gather to explosion point
+        const t = (phase - 0.25) / 0.05;
+        const prevX =
+          firework.launchX +
+          (firework.explosionX - firework.launchX) * pData.trailPos;
+        const prevY =
+          firework.launchY +
+          (firework.explosionY - firework.launchY) * pData.trailPos;
+
+        target.x = prevX + (firework.explosionX - prevX) * t;
+        target.y = prevY + (firework.explosionY - prevY) * t;
         target.opacity = 1;
-      } else if (phase < 0.6) {
-        // Explosion phase
-        const t = (phase - 0.2) / 0.4;
-        const expansion = Math.pow(t, 0.4);
-        const maxDist = 400 * respScale;
+      } else if (phase < 0.65) {
+        // Explosion phase - dramatic expansion
+        const t = (phase - 0.3) / 0.35;
+        const expansion = Math.pow(t, 0.35);
+        const maxDist = 600 * respScale;
         const dist = expansion * maxDist * pData.radius;
-        
-        target.x = firework.explosionX + Math.cos(pData.angle) * dist + pData.offset;
-        target.y = firework.explosionY + Math.sin(pData.angle) * dist + pData.offset;
+
+        target.x = firework.explosionX + Math.cos(pData.angle) * dist;
+        target.y = firework.explosionY + Math.sin(pData.angle) * dist;
         target.opacity = 1;
       } else {
-        // Fade phase
-        const t = (phase - 0.6) / 0.25;
-        const maxDist = 400 * respScale;
-        
-        target.x = firework.explosionX + Math.cos(pData.angle) * maxDist * pData.radius + pData.offset;
-        target.y = firework.explosionY + Math.sin(pData.angle) * maxDist * pData.radius + pData.offset;
-        target.opacity = Math.max(1 - t, 0);
+        // Fade phase - particles stay and fade
+        const t = (phase - 0.65) / 0.25;
+        const maxDist = 600 * respScale;
+
+        target.x =
+          firework.explosionX + Math.cos(pData.angle) * maxDist * pData.radius;
+        target.y =
+          firework.explosionY + Math.sin(pData.angle) * maxDist * pData.radius;
+        target.opacity = Math.max(1 - t * 1.2, 0);
       }
     }
   }
@@ -271,41 +307,67 @@ function textTargets(text, count, canvas, scale = 1.0) {
 
     let fontSize;
     if (isVerySmallScreen) {
-      fontSize = canvas.width * 0.25;
+      fontSize = canvas.width * 0.2; // 20% on very small
     } else if (isSmallScreen) {
-      fontSize = canvas.width * 0.2;
+      fontSize = canvas.width * 0.15; // 15% on small
     } else {
-      fontSize = Math.min(canvas.width * 0.08, 100);
+      // Desktop: 10% of screen width, max 150px
+      fontSize = Math.min(canvas.width * 0.1, 150);
     }
-    fontSize = Math.max(fontSize, 70);
+    fontSize = Math.max(fontSize, 50);
 
     tempCtx.fillStyle = "white";
     tempCtx.font = `bold ${fontSize}px Arial`;
     tempCtx.textAlign = "center";
     tempCtx.textBaseline = "middle";
 
-    if (isSmallScreen && text.includes(" ")) {
+    // Check if text is too wide - if so, split into lines
+    const textWidth = tempCtx.measureText(text).width;
+    const maxWidth = canvas.width * 0.85; // Max 85% of screen width
+
+    if (text.includes(" ") && textWidth > maxWidth) {
       const words = text.split(" ");
+
       if (isVerySmallScreen) {
-        const lineHeight = fontSize * 1.0;
+        // One word per line on very small screens
+        const lineHeight = fontSize * 1.1;
         const totalHeight = words.length * lineHeight;
         const startY = (canvas.height - totalHeight) / 2 + lineHeight / 2;
         for (let idx = 0; idx < words.length; idx++) {
-          tempCtx.fillText(words[idx], tempCanvas.width / 2, startY + idx * lineHeight);
+          tempCtx.fillText(
+            words[idx],
+            tempCanvas.width / 2,
+            startY + idx * lineHeight
+          );
         }
       } else {
+        // Split into 2 lines
         const midPoint = Math.ceil(words.length / 2);
         const line1 = words.slice(0, midPoint).join(" ");
         const line2 = words.slice(midPoint).join(" ");
-        const lineHeight = fontSize * 1.2;
-        tempCtx.fillText(line1, tempCanvas.width / 2, tempCanvas.height / 2 - lineHeight / 2);
-        tempCtx.fillText(line2, tempCanvas.width / 2, tempCanvas.height / 2 + lineHeight / 2);
+        const lineHeight = fontSize * 1.3;
+        tempCtx.fillText(
+          line1,
+          tempCanvas.width / 2,
+          tempCanvas.height / 2 - lineHeight / 2
+        );
+        tempCtx.fillText(
+          line2,
+          tempCanvas.width / 2,
+          tempCanvas.height / 2 + lineHeight / 2
+        );
       }
     } else {
+      // Single line - fits on screen
       tempCtx.fillText(text, tempCanvas.width / 2, tempCanvas.height / 2);
     }
 
-    const img = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+    const img = tempCtx.getImageData(
+      0,
+      0,
+      tempCanvas.width,
+      tempCanvas.height
+    ).data;
     const pts = [];
 
     // Sample pixels more efficiently
@@ -313,13 +375,16 @@ function textTargets(text, count, canvas, scale = 1.0) {
     for (let i = 0; i < img.length; i += 4 * step) {
       if (img[i + 3] > 128) {
         const p = i / 4;
-        pts.push({ x: p % tempCanvas.width, y: Math.floor(p / tempCanvas.width) });
+        pts.push({
+          x: p % tempCanvas.width,
+          y: Math.floor(p / tempCanvas.width),
+        });
       }
     }
 
     textPoints3D = new Array(count);
     textTargetsCache = new Array(count);
-    
+
     if (pts.length === 0) {
       for (let i = 0; i < count; i++) {
         textPoints3D[i] = { x: canvas.width / 2, y: canvas.height / 2 };

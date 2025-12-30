@@ -96,7 +96,8 @@ function resize() {
   if (typeof spherePoints3D !== "undefined") spherePoints3D.length = 0;
   if (typeof heartPoints3D !== "undefined") heartPoints3D.length = 0;
   if (typeof starPoints3D !== "undefined") starPoints3D.length = 0;
-  if (typeof fireworksTargetsCache !== "undefined") fireworksTargetsCache.length = 0;
+  if (typeof fireworksTargetsCache !== "undefined")
+    fireworksTargetsCache.length = 0;
   if (typeof textTargetsCache !== "undefined") textTargetsCache.length = 0;
 
   // Force target update after resize
@@ -140,15 +141,18 @@ function getParticleCount() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   const pixels = w * h;
-  
+
   // Check if mobile device
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  
+  const isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+
   if (isMobile) {
-    // VERY aggressive reduction for mobile - prioritize FPS
-    return 300; // Fixed low count for all mobile
+    // Mobile: 1500 particles for better text visibility
+    return 1500;
   }
-  
+
   // Desktop
   if (pixels < 1000000) return 2000;
   if (pixels < 2000000) return 3000;
@@ -219,7 +223,7 @@ function updateTargets() {
       "Happy new year 2026",
       ps.particles.length,
       canvas,
-      objectScale * responsiveScale
+      objectScale
     );
   }
 
@@ -229,7 +233,7 @@ function updateTargets() {
       displayText,
       ps.particles.length,
       canvas,
-      objectScale * responsiveScale
+      objectScale
     );
   }
 
@@ -250,42 +254,247 @@ updateTargets();
 /* ---------- MediaPipe ---------- */
 
 // Check if mobile for lighter settings
-const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isMobileDevice =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
 
-// On mobile, skip MediaPipe entirely - use touch controls instead
-if (isMobileDevice) {
-  updateLoadingProgress(50, "Mode sentuh aktif...");
+// Mobile state management
+let mobileHandTrackingEnabled = false;
+let mobileCamera = null;
+let mobileHands = null;
+let touchClickHandler = null;
+
+// Touch states for touch mode
+const touchStates = [
+  "SPHERE",
+  "STAR",
+  "LOVE",
+  "TEXT_CUSTOM",
+  "TEXT",
+  "FIREWORKS",
+];
+let touchStateIndex = 0;
+
+// Setup touch controls for mobile
+function setupTouchControls() {
+  canvas.style.pointerEvents = "auto";
   
-  // Hide camera box on mobile
-  const cameraBox = document.getElementById("camera-box");
-  if (cameraBox) cameraBox.style.display = "none";
+  // Remove old handler if exists
+  if (touchClickHandler) {
+    canvas.removeEventListener("click", touchClickHandler);
+  }
   
-  // Update instructions for touch mode
+  touchClickHandler = () => {
+    touchStateIndex = (touchStateIndex + 1) % touchStates.length;
+    currentState = touchStates[touchStateIndex];
+    stateText.innerText = `State: ${currentState}`;
+    if (typeof needsTargetUpdate !== "undefined") needsTargetUpdate = true;
+  };
+  
+  canvas.addEventListener("click", touchClickHandler);
+}
+
+// Remove touch controls
+function removeTouchControls() {
+  if (touchClickHandler) {
+    canvas.removeEventListener("click", touchClickHandler);
+    touchClickHandler = null;
+  }
+  canvas.style.pointerEvents = "none";
+}
+
+// Update instructions based on mode
+function updateMobileInstructions(handTrackingOn) {
   const instructions = document.getElementById("instructions");
-  if (instructions) {
+  if (!instructions) return;
+  
+  if (handTrackingOn) {
+    instructions.innerHTML = `
+      <h3>🎆 Mode Hand Tracking</h3>
+      <ul style="padding-left:15px;margin:5px 0">
+        <li>👋 Tanpa Tangan → Bola</li>
+        <li>✊ Tutup → Text Custom</li>
+        <li>☝️ 1 Jari → Bintang</li>
+        <li>✌️ 2 Jari → Love</li>
+        <li>🤟 3 Jari → Happy NY</li>
+        <li>🖐️ Terbuka → Kembang Api</li>
+      </ul>
+    `;
+  } else {
     instructions.innerHTML = `
       <h3>🎆 Mode Sentuh</h3>
       <p style="margin:5px 0">Tap layar untuk ganti efek:</p>
       <ul style="padding-left:15px;margin:5px 0">
         <li>Bola → Bintang → Love</li>
-        <li>→ Text → Kembang Api</li>
+        <li>→ Text Custom → Happy NY</li>
+        <li>→ Kembang Api</li>
       </ul>
     `;
   }
-  
-  // Touch to cycle through states
-  let touchStates = ["SPHERE", "STAR", "LOVE", "TEXT", "FIREWORKS"];
-  let touchStateIndex = 0;
-  
-  canvas.style.pointerEvents = "auto";
-  canvas.addEventListener("click", () => {
-    touchStateIndex = (touchStateIndex + 1) % touchStates.length;
-    currentState = touchStates[touchStateIndex];
-    stateText.innerText = `State: ${currentState}`;
-    if (typeof needsTargetUpdate !== "undefined") needsTargetUpdate = true;
+}
+
+// Initialize MediaPipe for mobile (lighter settings)
+function initMobileMediaPipe() {
+  return new Promise((resolve, reject) => {
+    const toggleBtn = document.getElementById("hand-toggle-btn");
+    if (toggleBtn) {
+      toggleBtn.classList.add("loading");
+      toggleBtn.querySelector(".toggle-text").textContent = "Loading...";
+    }
+    
+    mobileHands = new Hands({
+      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
+    });
+
+    // Light settings for mobile
+    mobileHands.setOptions({
+      maxNumHands: 1,  // Only 1 hand on mobile
+      modelComplexity: 0,  // Lightest model
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5,
+    });
+
+    let firstResult = false;
+    
+    mobileHands.onResults((results) => {
+      if (!firstResult) {
+        firstResult = true;
+        resolve();
+      }
+      
+      if (!mobileHandTrackingEnabled) return;
+      
+      debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        currentState = "SPHERE";
+        gestureText.innerText = "Gesture: NO HAND";
+        stateText.innerText = "State: SPHERE";
+        return;
+      }
+
+      // Draw landmarks
+      results.multiHandLandmarks.forEach((landmarks) => {
+        drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {
+          color: "#00FFAA",
+          lineWidth: 2,
+        });
+        drawLandmarks(debugCtx, landmarks, {
+          color: "#FF5555",
+          radius: 2,
+        });
+      });
+
+      // Detect gesture
+      const gesture = detectGesture(results.multiHandLandmarks[0]);
+      gestureText.innerText = "Gesture: " + gesture;
+
+      if (gesture === "NONE") currentState = "TEXT_CUSTOM";
+      if (gesture === "ONE") currentState = "STAR";
+      if (gesture === "TWO") currentState = "LOVE";
+      if (gesture === "THREE") currentState = "TEXT";
+      if (gesture === "OPEN") currentState = "FIREWORKS";
+
+      stateText.innerText = `State: ${currentState}`;
+    });
+
+    // Initialize camera with lower resolution for mobile
+    mobileCamera = new Camera(video, {
+      onFrame: async () => {
+        if (mobileHandTrackingEnabled && mobileHands) {
+          await mobileHands.send({ image: video });
+        }
+      },
+      width: 320,  // Lower resolution for mobile
+      height: 240,
+    });
+
+    mobileCamera.start()
+      .then(() => resolve())
+      .catch((err) => {
+        console.error("Mobile camera error:", err);
+        reject(err);
+      });
   });
+}
+
+// Toggle hand tracking on mobile
+async function toggleMobileHandTracking() {
+  const toggleBtn = document.getElementById("hand-toggle-btn");
+  const cameraBox = document.getElementById("camera-box");
   
-  // Mark as ready immediately
+  if (mobileHandTrackingEnabled) {
+    // Turn OFF hand tracking
+    mobileHandTrackingEnabled = false;
+    
+    if (toggleBtn) {
+      toggleBtn.classList.remove("active");
+      toggleBtn.querySelector(".toggle-text").textContent = "Hand Tracking: OFF";
+    }
+    
+    if (cameraBox) cameraBox.style.display = "none";
+    
+    // Re-enable touch controls
+    setupTouchControls();
+    updateMobileInstructions(false);
+    
+    gestureText.innerText = "Gesture: TAP MODE";
+    
+  } else {
+    // Turn ON hand tracking
+    try {
+      // Initialize if not already
+      if (!mobileHands) {
+        await initMobileMediaPipe();
+      }
+      
+      mobileHandTrackingEnabled = true;
+      
+      if (toggleBtn) {
+        toggleBtn.classList.remove("loading");
+        toggleBtn.classList.add("active");
+        toggleBtn.querySelector(".toggle-text").textContent = "Hand Tracking: ON";
+      }
+      
+      if (cameraBox) cameraBox.style.display = "block";
+      
+      // Disable touch controls
+      removeTouchControls();
+      updateMobileInstructions(true);
+      
+      gestureText.innerText = "Gesture: DETECTING...";
+      
+    } catch (err) {
+      console.error("Failed to enable hand tracking:", err);
+      if (toggleBtn) {
+        toggleBtn.classList.remove("loading");
+        toggleBtn.querySelector(".toggle-text").textContent = "Error - Tap to retry";
+      }
+      alert("Gagal mengaktifkan hand tracking. Pastikan izin kamera diberikan.");
+    }
+  }
+}
+
+// On mobile
+if (isMobileDevice) {
+  updateLoadingProgress(50, "Mode sentuh aktif...");
+
+  // Hide camera box initially on mobile
+  const cameraBox = document.getElementById("camera-box");
+  if (cameraBox) cameraBox.style.display = "none";
+
+  // Setup toggle button
+  const toggleBtn = document.getElementById("hand-toggle-btn");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", toggleMobileHandTracking);
+  }
+
+  // Start with touch controls
+  setupTouchControls();
+  updateMobileInstructions(false);
+
+  // Mark as ready
   mediaLoaded = true;
   cameraReady = true;
   handsModelReady = true;
@@ -293,7 +502,7 @@ if (isMobileDevice) {
   checkAllLoaded();
   
 } else {
-  // Desktop: use MediaPipe
+  // Desktop: use MediaPipe with full settings
   updateLoadingProgress(30, "Memuat model MediaPipe...");
 
   const hands = new Hands({
@@ -318,10 +527,13 @@ if (isMobileDevice) {
       updateLoadingProgress(90, "Model siap!");
       checkAllLoaded();
     }
-    
+
     debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
-    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    if (
+      !results.multiHandLandmarks ||
+      results.multiHandLandmarks.length === 0
+    ) {
       currentState = "SPHERE";
       gestureText.innerText = "Gesture: NO HAND";
       stateText.innerText = "State: SPHERE | Scale: 1.0x";
@@ -355,7 +567,9 @@ if (isMobileDevice) {
     }
 
     if (gestureHandIndex !== -1) {
-      const gesture = detectGesture(results.multiHandLandmarks[gestureHandIndex]);
+      const gesture = detectGesture(
+        results.multiHandLandmarks[gestureHandIndex]
+      );
       gestureText.innerText = "Gesture: " + gesture;
 
       if (gesture === "NONE") currentState = "TEXT_CUSTOM";
@@ -378,7 +592,9 @@ if (isMobileDevice) {
       objectScale = 1.0;
     }
 
-    stateText.innerText = `State: ${currentState} | Scale: ${objectScale.toFixed(1)}x`;
+    stateText.innerText = `State: ${currentState} | Scale: ${objectScale.toFixed(
+      1
+    )}x`;
   });
 
   updateLoadingProgress(50, "Mengakses kamera...");
@@ -391,15 +607,18 @@ if (isMobileDevice) {
     height: 480,
   });
 
-  camera.start().then(() => {
-    cameraReady = true;
-    updateLoadingProgress(70, "Kamera siap, memuat model...");
-    checkAllLoaded();
-  }).catch((err) => {
-    console.error("Camera error:", err);
-    cameraReady = true;
-    checkAllLoaded();
-  });
+  camera
+    .start()
+    .then(() => {
+      cameraReady = true;
+      updateLoadingProgress(70, "Kamera siap, memuat model...");
+      checkAllLoaded();
+    })
+    .catch((err) => {
+      console.error("Camera error:", err);
+      cameraReady = true;
+      checkAllLoaded();
+    });
 
   video.onloadedmetadata = () => {
     mediaLoaded = true;
@@ -413,16 +632,24 @@ if (isMobileDevice) {
 
 // Track if targets need update
 let needsTargetUpdate = true;
+let lastObjectScale = 1.0;
 
 function animate() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Only update targets when needed
-  const isAnimatedState = currentState === "FIREWORKS" || 
-                          currentState === "SPHERE" || 
-                          currentState === "STAR" || 
-                          currentState === "LOVE";
-  
+  // Check if scale changed - need to update targets
+  if (objectScale !== lastObjectScale) {
+    needsTargetUpdate = true;
+    lastObjectScale = objectScale;
+  }
+
+  // Update targets when needed (animated states or scale changed)
+  const isAnimatedState =
+    currentState === "FIREWORKS" ||
+    currentState === "SPHERE" ||
+    currentState === "STAR" ||
+    currentState === "LOVE";
+
   if (isAnimatedState || needsTargetUpdate) {
     updateTargets();
     if (!isAnimatedState) needsTargetUpdate = false;
