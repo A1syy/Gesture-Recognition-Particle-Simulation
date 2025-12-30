@@ -279,19 +279,19 @@ let touchStateIndex = 0;
 // Setup touch controls for mobile
 function setupTouchControls() {
   canvas.style.pointerEvents = "auto";
-  
+
   // Remove old handler if exists
   if (touchClickHandler) {
     canvas.removeEventListener("click", touchClickHandler);
   }
-  
+
   touchClickHandler = () => {
     touchStateIndex = (touchStateIndex + 1) % touchStates.length;
     currentState = touchStates[touchStateIndex];
     stateText.innerText = `State: ${currentState}`;
     if (typeof needsTargetUpdate !== "undefined") needsTargetUpdate = true;
   };
-  
+
   canvas.addEventListener("click", touchClickHandler);
 }
 
@@ -308,7 +308,7 @@ function removeTouchControls() {
 function updateMobileInstructions(handTrackingOn) {
   const instructions = document.getElementById("instructions");
   if (!instructions) return;
-  
+
   if (handTrackingOn) {
     instructions.innerHTML = `
       <h3>🎆 Mode Hand Tracking</h3>
@@ -338,36 +338,34 @@ function updateMobileInstructions(handTrackingOn) {
 function initMobileMediaPipe() {
   return new Promise((resolve, reject) => {
     const toggleBtn = document.getElementById("hand-toggle-btn");
+    const cameraLoading = document.getElementById("camera-loading");
+    
     if (toggleBtn) {
       toggleBtn.classList.add("loading");
       toggleBtn.querySelector(".toggle-text").textContent = "Loading...";
     }
-    
+
     mobileHands = new Hands({
       locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
     });
 
     // Light settings for mobile
     mobileHands.setOptions({
-      maxNumHands: 1,  // Only 1 hand on mobile
-      modelComplexity: 0,  // Lightest model
+      maxNumHands: 1, // Only 1 hand on mobile
+      modelComplexity: 0, // Lightest model
       minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.5,
     });
 
-    let firstResult = false;
-    
     mobileHands.onResults((results) => {
-      if (!firstResult) {
-        firstResult = true;
-        resolve();
-      }
-      
       if (!mobileHandTrackingEnabled) return;
-      
+
       debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
-      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      if (
+        !results.multiHandLandmarks ||
+        results.multiHandLandmarks.length === 0
+      ) {
         currentState = "SPHERE";
         gestureText.innerText = "Gesture: NO HAND";
         stateText.innerText = "State: SPHERE";
@@ -400,18 +398,29 @@ function initMobileMediaPipe() {
     });
 
     // Initialize camera with lower resolution for mobile
+    if (cameraLoading) {
+      cameraLoading.querySelector(".camera-text").textContent = "Menyalakan kamera...";
+    }
+    
     mobileCamera = new Camera(video, {
       onFrame: async () => {
         if (mobileHandTrackingEnabled && mobileHands) {
           await mobileHands.send({ image: video });
         }
       },
-      width: 320,  // Lower resolution for mobile
+      width: 320, // Lower resolution for mobile
       height: 240,
     });
 
-    mobileCamera.start()
-      .then(() => resolve())
+    mobileCamera
+      .start()
+      .then(() => {
+        // Camera ready - hide loading and resolve
+        if (cameraLoading) {
+          cameraLoading.classList.add("hidden");
+        }
+        resolve();
+      })
       .catch((err) => {
         console.error("Mobile camera error:", err);
         reject(err);
@@ -423,55 +432,82 @@ function initMobileMediaPipe() {
 async function toggleMobileHandTracking() {
   const toggleBtn = document.getElementById("hand-toggle-btn");
   const cameraBox = document.getElementById("camera-box");
-  
+  const cameraLoading = document.getElementById("camera-loading");
+
   if (mobileHandTrackingEnabled) {
     // Turn OFF hand tracking
     mobileHandTrackingEnabled = false;
-    
+
     if (toggleBtn) {
       toggleBtn.classList.remove("active");
-      toggleBtn.querySelector(".toggle-text").textContent = "Hand Tracking: OFF";
+      toggleBtn.querySelector(".toggle-text").textContent =
+        "Hand Tracking: OFF";
     }
-    
+
     if (cameraBox) cameraBox.style.display = "none";
-    
+
     // Re-enable touch controls
     setupTouchControls();
     updateMobileInstructions(false);
-    
+
     gestureText.innerText = "Gesture: TAP MODE";
-    
   } else {
     // Turn ON hand tracking
     try {
-      // Initialize if not already
-      if (!mobileHands) {
-        await initMobileMediaPipe();
+      // Show camera box with loading overlay
+      if (cameraBox) cameraBox.style.display = "block";
+      if (cameraLoading) {
+        cameraLoading.classList.remove("hidden");
+        cameraLoading.querySelector(".camera-text").textContent = "Memuat kamera...";
       }
       
+      if (toggleBtn) {
+        toggleBtn.classList.add("loading");
+        toggleBtn.querySelector(".toggle-text").textContent = "Loading...";
+      }
+
+      // Initialize if not already
+      if (!mobileHands) {
+        if (cameraLoading) {
+          cameraLoading.querySelector(".camera-text").textContent = "Memuat model AI...";
+        }
+        await initMobileMediaPipe();
+      }
+
       mobileHandTrackingEnabled = true;
-      
+
+      // Hide loading overlay
+      if (cameraLoading) {
+        cameraLoading.classList.add("hidden");
+      }
+
       if (toggleBtn) {
         toggleBtn.classList.remove("loading");
         toggleBtn.classList.add("active");
-        toggleBtn.querySelector(".toggle-text").textContent = "Hand Tracking: ON";
+        toggleBtn.querySelector(".toggle-text").textContent =
+          "Hand Tracking: ON";
       }
-      
-      if (cameraBox) cameraBox.style.display = "block";
-      
+
       // Disable touch controls
       removeTouchControls();
       updateMobileInstructions(true);
-      
+
       gestureText.innerText = "Gesture: DETECTING...";
-      
     } catch (err) {
       console.error("Failed to enable hand tracking:", err);
+      
+      // Hide loading and camera box on error
+      if (cameraLoading) cameraLoading.classList.add("hidden");
+      if (cameraBox) cameraBox.style.display = "none";
+      
       if (toggleBtn) {
         toggleBtn.classList.remove("loading");
-        toggleBtn.querySelector(".toggle-text").textContent = "Error - Tap to retry";
+        toggleBtn.querySelector(".toggle-text").textContent =
+          "Error - Tap to retry";
       }
-      alert("Gagal mengaktifkan hand tracking. Pastikan izin kamera diberikan.");
+      alert(
+        "Gagal mengaktifkan hand tracking. Pastikan izin kamera diberikan."
+      );
     }
   }
 }
@@ -500,7 +536,6 @@ if (isMobileDevice) {
   handsModelReady = true;
   updateLoadingProgress(100, "Siap!");
   checkAllLoaded();
-  
 } else {
   // Desktop: use MediaPipe with full settings
   updateLoadingProgress(30, "Memuat model MediaPipe...");
