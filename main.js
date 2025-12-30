@@ -8,6 +8,45 @@ const debugCtx = debugCanvas.getContext("2d");
 const gestureText = document.getElementById("gesture");
 const stateText = document.getElementById("state");
 
+/* ---------- Loading Screen ---------- */
+
+const loadingScreen = document.getElementById("loading-screen");
+const progressBar = document.getElementById("progress-bar");
+const loadingStatus = document.getElementById("loading-status");
+
+let loadProgress = 0;
+let mediaLoaded = false;
+let cameraReady = false;
+let handsModelReady = false;
+
+function updateLoadingProgress(progress, status) {
+  loadProgress = Math.min(progress, 100);
+  if (progressBar) progressBar.style.width = loadProgress + "%";
+  if (loadingStatus) loadingStatus.textContent = status;
+}
+
+function checkAllLoaded() {
+  if (mediaLoaded && cameraReady && handsModelReady) {
+    updateLoadingProgress(100, "Selesai!");
+    setTimeout(() => {
+      if (loadingScreen) loadingScreen.classList.add("hidden");
+    }, 500);
+  }
+}
+
+// Fallback: Hide loading screen after 15 seconds max (in case something fails)
+setTimeout(() => {
+  if (loadingScreen && !loadingScreen.classList.contains("hidden")) {
+    updateLoadingProgress(100, "Memulai...");
+    setTimeout(() => {
+      loadingScreen.classList.add("hidden");
+    }, 300);
+  }
+}, 15000);
+
+// Initial progress
+updateLoadingProgress(10, "Memuat scripts...");
+
 /* ---------- Responsive Scale ---------- */
 
 // Base reference: 1920x1080 desktop
@@ -57,6 +96,8 @@ function resize() {
   if (typeof spherePoints3D !== "undefined") spherePoints3D.length = 0;
   if (typeof heartPoints3D !== "undefined") heartPoints3D.length = 0;
   if (typeof starPoints3D !== "undefined") starPoints3D.length = 0;
+  if (typeof fireworksTargetsCache !== "undefined") fireworksTargetsCache.length = 0;
+  if (typeof textTargetsCache !== "undefined") textTargetsCache.length = 0;
 
   // Force target update after resize
   if (typeof needsTargetUpdate !== "undefined") needsTargetUpdate = true;
@@ -99,12 +140,19 @@ function getParticleCount() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   const pixels = w * h;
-
-  if (pixels < 300000) return 1000; // Very small screens (phones)
-  if (pixels < 500000) return 1500; // Small screens
-  if (pixels < 1000000) return 2500; // Medium-small screens
-  if (pixels < 2000000) return 3500; // Medium screens
-  return 5000; // Large screens
+  
+  // Check if mobile device
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  if (isMobile) {
+    // VERY aggressive reduction for mobile - prioritize FPS
+    return 300; // Fixed low count for all mobile
+  }
+  
+  // Desktop
+  if (pixels < 1000000) return 2000;
+  if (pixels < 2000000) return 3000;
+  return 4000;
 }
 
 // Initialize canvas size first
@@ -201,112 +249,165 @@ updateTargets();
 
 /* ---------- MediaPipe ---------- */
 
-const hands = new Hands({
-  locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
-});
+// Check if mobile for lighter settings
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-hands.setOptions({
-  maxNumHands: 2,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.7,
-});
-
-hands.onResults((results) => {
-  debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-
-  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    // Reset to default sphere when no hands detected
-    currentState = "SPHERE";
-    gestureText.innerText = "Gesture: NO HAND";
-    stateText.innerText = "State: SPHERE | Scale: 1.0x";
-    return;
+// On mobile, skip MediaPipe entirely - use touch controls instead
+if (isMobileDevice) {
+  updateLoadingProgress(50, "Mode sentuh aktif...");
+  
+  // Hide camera box on mobile
+  const cameraBox = document.getElementById("camera-box");
+  if (cameraBox) cameraBox.style.display = "none";
+  
+  // Update instructions for touch mode
+  const instructions = document.getElementById("instructions");
+  if (instructions) {
+    instructions.innerHTML = `
+      <h3>🎆 Mode Sentuh</h3>
+      <p style="margin:5px 0">Tap layar untuk ganti efek:</p>
+      <ul style="padding-left:15px;margin:5px 0">
+        <li>Bola → Bintang → Love</li>
+        <li>→ Text → Kembang Api</li>
+      </ul>
+    `;
   }
+  
+  // Touch to cycle through states
+  let touchStates = ["SPHERE", "STAR", "LOVE", "TEXT", "FIREWORKS"];
+  let touchStateIndex = 0;
+  
+  canvas.style.pointerEvents = "auto";
+  canvas.addEventListener("click", () => {
+    touchStateIndex = (touchStateIndex + 1) % touchStates.length;
+    currentState = touchStates[touchStateIndex];
+    stateText.innerText = `State: ${currentState}`;
+    if (typeof needsTargetUpdate !== "undefined") needsTargetUpdate = true;
+  });
+  
+  // Mark as ready immediately
+  mediaLoaded = true;
+  cameraReady = true;
+  handsModelReady = true;
+  updateLoadingProgress(100, "Siap!");
+  checkAllLoaded();
+  
+} else {
+  // Desktop: use MediaPipe
+  updateLoadingProgress(30, "Memuat model MediaPipe...");
 
-  /* DRAW DEBUG LANDMARKS FOR ALL HANDS */
-  results.multiHandLandmarks.forEach((landmarks) => {
-    drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {
-      color: "#00FFAA",
-      lineWidth: 2,
-    });
-
-    drawLandmarks(debugCtx, landmarks, {
-      color: "#FF5555",
-      radius: 2,
-    });
+  const hands = new Hands({
+    locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
   });
 
-  /* SEPARATE HANDS BY ROLE */
-  let gestureHandIndex = -1;
-  let scaleHandIndex = -1;
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7,
+  });
 
-  // Find right hand for gesture control, left hand for scale control
-  if (results.multiHandedness) {
-    results.multiHandedness.forEach((handedness, index) => {
-      const label = handedness.label; // "Left" or "Right"
-      if (label === "Right") {
-        gestureHandIndex = index;
-      } else if (label === "Left") {
-        scaleHandIndex = index;
-      }
+  // Mark hands model as ready after first result
+  let firstResultReceived = false;
+
+  hands.onResults((results) => {
+    // Mark model as ready on first result
+    if (!firstResultReceived) {
+      firstResultReceived = true;
+      handsModelReady = true;
+      updateLoadingProgress(90, "Model siap!");
+      checkAllLoaded();
+    }
+    
+    debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      currentState = "SPHERE";
+      gestureText.innerText = "Gesture: NO HAND";
+      stateText.innerText = "State: SPHERE | Scale: 1.0x";
+      return;
+    }
+
+    results.multiHandLandmarks.forEach((landmarks) => {
+      drawConnectors(debugCtx, landmarks, HAND_CONNECTIONS, {
+        color: "#00FFAA",
+        lineWidth: 2,
+      });
+      drawLandmarks(debugCtx, landmarks, {
+        color: "#FF5555",
+        radius: 2,
+      });
     });
-  }
 
-  // Fallback: if only one hand, use it for gesture
-  if (gestureHandIndex === -1 && results.multiHandLandmarks.length > 0) {
-    gestureHandIndex = 0;
-  }
+    let gestureHandIndex = -1;
+    let scaleHandIndex = -1;
 
-  /* GESTURE LOGIC - ONLY FROM GESTURE HAND */
-  if (gestureHandIndex !== -1) {
-    const gesture = detectGesture(results.multiHandLandmarks[gestureHandIndex]);
-    gestureText.innerText = "Gesture: " + gesture;
+    if (results.multiHandedness) {
+      results.multiHandedness.forEach((handedness, index) => {
+        const label = handedness.label;
+        if (label === "Right") gestureHandIndex = index;
+        else if (label === "Left") scaleHandIndex = index;
+      });
+    }
 
-    if (gesture === "NONE") currentState = "TEXT_CUSTOM";
-    if (gesture === "ONE") currentState = "STAR";
-    if (gesture === "TWO") currentState = "LOVE";
-    if (gesture === "THREE") currentState = "TEXT"; // Happy New Year
-    if (gesture === "OPEN") currentState = "FIREWORKS";
-  } else {
-    // Default to sphere when no hand detected
-    currentState = "SPHERE";
-  }
+    if (gestureHandIndex === -1 && results.multiHandLandmarks.length > 0) {
+      gestureHandIndex = 0;
+    }
 
-  /* SCALE CONTROL - ONLY FROM SCALE HAND */
-  if (scaleHandIndex !== -1 && currentState !== "FIREWORKS") {
-    // Pinch zoom: Calculate distance between thumb tip and index finger tip
-    // Disabled for fireworks
-    const thumb = results.multiHandLandmarks[scaleHandIndex][4]; // Thumb tip
-    const index = results.multiHandLandmarks[scaleHandIndex][8]; // Index finger tip
+    if (gestureHandIndex !== -1) {
+      const gesture = detectGesture(results.multiHandLandmarks[gestureHandIndex]);
+      gestureText.innerText = "Gesture: " + gesture;
 
-    const distance = Math.sqrt(
-      Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2)
-    );
+      if (gesture === "NONE") currentState = "TEXT_CUSTOM";
+      if (gesture === "ONE") currentState = "STAR";
+      if (gesture === "TWO") currentState = "LOVE";
+      if (gesture === "THREE") currentState = "TEXT";
+      if (gesture === "OPEN") currentState = "FIREWORKS";
+    } else {
+      currentState = "SPHERE";
+    }
 
-    // Map pinch distance to scale (0.01 to 0.3 = 0.3x to 2.5x scale)
-    objectScale = Math.min(Math.max(distance * 8, 0.3), 2.5);
-  } else if (currentState !== "FIREWORKS") {
-    // Reset to default scale when second hand is not detected (except for fireworks)
-    objectScale = 1.0;
-  }
+    if (scaleHandIndex !== -1 && currentState !== "FIREWORKS") {
+      const thumb = results.multiHandLandmarks[scaleHandIndex][4];
+      const index = results.multiHandLandmarks[scaleHandIndex][8];
+      const distance = Math.sqrt(
+        Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2)
+      );
+      objectScale = Math.min(Math.max(distance * 8, 0.3), 2.5);
+    } else if (currentState !== "FIREWORKS") {
+      objectScale = 1.0;
+    }
 
-  // Always show current scale
-  stateText.innerText = `State: ${currentState} | Scale: ${objectScale.toFixed(
-    1
-  )}x`;
-});
+    stateText.innerText = `State: ${currentState} | Scale: ${objectScale.toFixed(1)}x`;
+  });
 
-const camera = new Camera(video, {
-  onFrame: async () => {
-    await hands.send({ image: video });
-  },
-  width: 640,
-  height: 480,
-});
+  updateLoadingProgress(50, "Mengakses kamera...");
 
-camera.start();
+  const camera = new Camera(video, {
+    onFrame: async () => {
+      await hands.send({ image: video });
+    },
+    width: 640,
+    height: 480,
+  });
 
-video.onloadedmetadata = resize;
+  camera.start().then(() => {
+    cameraReady = true;
+    updateLoadingProgress(70, "Kamera siap, memuat model...");
+    checkAllLoaded();
+  }).catch((err) => {
+    console.error("Camera error:", err);
+    cameraReady = true;
+    checkAllLoaded();
+  });
+
+  video.onloadedmetadata = () => {
+    mediaLoaded = true;
+    updateLoadingProgress(60, "Video siap...");
+    resize();
+    checkAllLoaded();
+  };
+}
 
 /* ---------- Animation ---------- */
 
@@ -316,26 +417,22 @@ let needsTargetUpdate = true;
 function animate() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Only update targets when needed for better performance
-  // FIREWORKS, SPHERE, STAR, LOVE need every frame (animation)
-  // TEXT states only need update on state change
-  const isAnimatedState =
-    currentState === "FIREWORKS" ||
-    currentState === "SPHERE" ||
-    currentState === "STAR" ||
-    currentState === "LOVE";
-
+  // Only update targets when needed
+  const isAnimatedState = currentState === "FIREWORKS" || 
+                          currentState === "SPHERE" || 
+                          currentState === "STAR" || 
+                          currentState === "LOVE";
+  
   if (isAnimatedState || needsTargetUpdate) {
     updateTargets();
     if (!isAnimatedState) needsTargetUpdate = false;
   }
 
-  // Pass current state for color selection
   ps.update(ctx, currentState);
 
   if (currentState !== lastState) {
     lastState = currentState;
-    needsTargetUpdate = true; // Force update on state change
+    needsTargetUpdate = true;
   }
 
   requestAnimationFrame(animate);
